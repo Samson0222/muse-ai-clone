@@ -32,7 +32,7 @@ Always reference and add color definitions in `src/constants/colors.ts`. Never h
 | Token | Hex / Value | Purpose |
 |---|---|---|
 | `Colors.primary` | `#2563EB` | Primary brand blue |
-| `Colors.chatBubbleUser` | `#E8C4B4` | Warm peach terracotta user chat bubble |
+| `Colors.chatBubbleUser` | `#2563EB` | Blue user chat bubble (white text) |
 | `Colors.chatBubbleAi` | `#EEF0F2` | Soft light gray agent message bubble |
 | `Colors.tabActiveBg` | `#E6E8EA` | Active tab pill capsule background in dock |
 | `Colors.iconDark` | `#1E2022` | Dark charcoal for icons and typography |

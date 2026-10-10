@@ -146,24 +146,6 @@ export const MOCK_TOOLS: Tool[] = [
     is_active: true,
     sort_order: 7,
   },
-  {
-    id: 'mock-twitter-008',
-    name: 'X (Twitter)',
-    slug: 'twitter',
-    toolkit_slug: 'twitter',
-    description: 'Post tweets, search posts, monitor mentions, and engage with followers.',
-    category: 'Social Media & Marketing',
-    logo_url: 'https://upload.wikimedia.org/wikipedia/commons/c/ce/X_logo_2023.svg',
-    logo_key: 'twitter',
-    actions: [
-      { name: 'TWITTER_CREATETWEET', description: 'Post a new tweet/post' },
-      { name: 'TWITTER_SEARCH_RECENT', description: 'Search recent tweets' },
-      { name: 'TWITTER_GET_USER_TIMELINE', description: 'Fetch user timeline posts' },
-    ],
-    composio_auth_config_id: 'ac_twitter_placeholder_008',
-    is_active: true,
-    sort_order: 8,
-  },
 ];
 
 /**

@@ -129,3 +129,110 @@ export interface ToolWithConnection {
   /** Connection record ID if exists */
   connection_id?: string | null;
 }
+
+/**
+ * A tool the agent needs but the user has not connected yet.
+ * Rendered in chat as a Connect CTA (see ChatConnectCta).
+ */
+export interface ChatConnectSuggestionTool {
+  /** tools.id UUID */
+  tool_id: string;
+  /** tools.slug — accepted by the /api/tools/:toolId/* routes */
+  slug: string;
+  /** Display name (e.g. 'Gmail') */
+  name: string;
+  logo_url?: string | null;
+  logo_key?: string | null;
+}
+
+/**
+ * Payload of the `connect` chat stream event.
+ */
+export interface ChatConnectSuggestion {
+  tools: ChatConnectSuggestionTool[];
+  /** Agent-authored sentence introducing the CTA. */
+  message?: string;
+}
+
+/**
+ * Payload of the `confirm` chat stream event: a write action the agent prepared
+ * but will not run until the user approves it.
+ */
+export interface ChatConfirmRequest {
+  /** Capability key from the shared registry (e.g. 'gmail_send_email') */
+  capability: string;
+  /** tools.slug of the tool that will run it */
+  toolSlug: string;
+  /** Display name of the tool */
+  toolName: string;
+  /** Composio toolkit slug */
+  toolkitSlug: string;
+  /** Brand logo for the confirmation card header */
+  logoUrl?: string | null;
+  logoKey?: string | null;
+  /** One-line description of the pending action */
+  actionSummary: string;
+  /** Multi-line detail shown inside the confirmation card */
+  details: string;
+  /** Arguments replayed to /api/tools/execute on confirm */
+  input: Record<string, any>;
+}
+
+/** Lifecycle of a confirmation card inside the chat thread. */
+export type ChatConfirmState =
+  | 'pending'
+  | 'running'
+  | 'confirmed'
+  | 'cancelled'
+  | 'failed';
+
+/** Result returned by POST /api/tools/execute. */
+export interface ToolExecutionResult {
+  status: 'success' | 'failed';
+  action: string;
+  capability: string;
+  tool: string;
+  input_summary: string;
+  output_summary: string;
+  error_message: string | null;
+  message: string;
+}
+
+/**
+ * Payload of the `schedule` chat stream event: a recurring task the agent
+ * prepared but will not save until the user confirms it.
+ */
+export interface ChatScheduleRequest {
+  /** Short card title, e.g. "Hacker News top 5" */
+  title: string;
+  /** Instruction the dispatcher executes on every run */
+  task: string;
+  /** Self-contained browser instruction when the task needs live web data */
+  webTask: string | null;
+  frequency: 'daily' | 'weekly';
+  /** 24-hour "HH:MM" in `timezone` */
+  time: string;
+  /** Lowercase weekday name, weekly schedules only */
+  weekday: string | null;
+  /** IANA timezone the time is expressed in */
+  timezone: string;
+  /** Where each run's result is delivered */
+  delivery: 'chat' | 'slack';
+  /** Slack channel, only when `delivery` is 'slack' */
+  slackChannel: string | null;
+  /** The user's message that asked for the schedule */
+  originalPrompt: string;
+  /** Human readable recurrence, e.g. "Every day at 8:00 AM" */
+  scheduleSummary: string;
+  /** Human readable first run, e.g. "Tomorrow at 8:00 AM" */
+  nextRunLabel: string;
+}
+
+/** Result returned by POST /api/schedules. */
+export interface CreatedSchedule {
+  id: string;
+  scheduleSummary: string;
+  nextRunLabel: string;
+  nextRunAt: string;
+  delivery: 'chat' | 'slack';
+}

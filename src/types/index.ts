@@ -5,6 +5,13 @@
  * navigation, companion chat, scheduler tasks, ideas, and settings.
  */
 
+import type {
+  ChatConfirmRequest,
+  ChatConfirmState,
+  ChatConnectSuggestion,
+  ChatScheduleRequest,
+} from './tools';
+
 /**
  * Message object representing a chat utterance in the conversation history.
  */
@@ -18,6 +25,18 @@ export interface ChatMessage {
   /** Formatted timestamp display string (e.g. "3:35 PM") */
   timestamp: string;
   browserPreview?: BrowserBaseSessionToolOutput;
+  /** Tools the agent needs connected before it can continue */
+  connectSuggestion?: ChatConnectSuggestion;
+  /** Write action awaiting the user's Confirm / Cancel */
+  confirmRequest?: ChatConfirmRequest;
+  /** Lifecycle of `confirmRequest` */
+  confirmState?: ChatConfirmState;
+  /** Tools from `connectSuggestion` the user has connected from this card */
+  connectedSlugs?: string[];
+  /** Recurring task awaiting the user's Confirm / Cancel */
+  scheduleRequest?: ChatScheduleRequest;
+  /** Lifecycle of `scheduleRequest` */
+  scheduleState?: ChatConfirmState;
 }
 
 /**

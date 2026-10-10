@@ -55,6 +55,7 @@ export default function SignInScreen() {
   useEffect(() => {
     supabase.auth.getSession().then(async ({ data: { session } }) => {
       if (session) {
+        console.log("Existing session found:", session.access_token);
         await ensureUserRow(session.user);
         router.replace("/(tabs)/chat");
       }

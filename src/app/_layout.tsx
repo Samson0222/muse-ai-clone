@@ -24,6 +24,8 @@ export default function RootLayout() {
           <Stack.Screen name="index" options={{ headerShown: false }} />
           <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
           <Stack.Screen name="home" options={{ headerShown: false }} />
+          <Stack.Screen name="tools-connections" options={{ headerShown: false }} />
+          <Stack.Screen name="chat-search" options={{ headerShown: false }} />
         </Stack>
         <StatusBar style="dark" />
       </ToastProvider>

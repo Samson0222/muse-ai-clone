@@ -52,10 +52,15 @@ export const Colors = {
   tabInactive: '#1E2022',
   tabActive: '#1E2022',
   tabActiveBg: '#E6E8EA',
-  chatBubbleUser: '#E8C4B4',
+  chatBubbleUser: '#2563EB',       // Brand blue user bubble
+  chatBubbleUserText: '#FFFFFF',   // White copy on the blue bubble
+  chatBubbleUserLink: '#DBEAFE',   // Light blue links readable on the blue bubble
+  chatBubbleUserCodeBg: 'rgba(255, 255, 255, 0.2)', // Code blocks inside the blue bubble
+  chatBubbleUserRule: 'rgba(255, 255, 255, 0.5)',   // Quote bars and dividers inside it
   chatBubbleAi: '#EEF0F2',
   chatBubbleAiBorder: 'transparent',
   overlay: 'rgba(15, 23, 42, 0.45)',
+  overlaySoft: 'rgba(15, 23, 42, 0.22)',  // Dim behind the slide-over drawer
   statusBlue: '#2563EB',
   iconDark: '#1E2022',
   iconMuted: '#9E9E9E',
@@ -72,6 +77,11 @@ export const Colors = {
   googleBgHover: '#F8FAFD',
 
   browserPreviewBg: '#FFFFFF',
+
+  // Settings / list card surfaces
+  cardBg: '#FAFAFB',
+  cardBorder: '#ECEEF0',
+  cardDivider: '#F0F0F2',
 
   // Dark Scheme Palette (for dark mode compatibility)
   light: {

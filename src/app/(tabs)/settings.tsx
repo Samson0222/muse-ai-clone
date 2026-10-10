@@ -3,7 +3,7 @@
  *
  * Clean settings & account management:
  * - Free Plan progress card
- * - Settings items (Connectors, Pricing, Notifications, Appearance, Help & Feedback, Sign Out)
+ * - Settings items (Tools & Connections, Pricing, Notifications, Appearance, Help & Feedback, Sign Out)
  * - Simple on-click Toast triggers without complex modal logic
  */
 
@@ -17,19 +17,21 @@ import {
 } from 'react-native';
 import { HugeiconsIcon } from '@hugeicons/react-native';
 import {
-  Grid02Icon,
   Tag01Icon,
   Notification01Icon,
   PaintBrush01Icon,
   ArrowRight01Icon,
   HelpCircleIcon,
   Logout01Icon,
+  Link01Icon,
 } from '@hugeicons/core-free-icons';
+import { useRouter } from 'expo-router';
 import { Colors } from '@/constants/colors';
 import { SETTINGS_PLAN_DATA } from '@/constants/dummyData';
 import { showToast } from '@/context/ToastContext';
 
 export default function SettingsScreen() {
+  const router = useRouter();
   return (
     <View style={styles.container}>
       <ScrollView
@@ -68,12 +70,12 @@ export default function SettingsScreen() {
         <View style={styles.groupCard}>
           <TouchableOpacity
             style={styles.listItem}
-            onPress={() => showToast('Connectors')}
+            onPress={() => router.push('/tools-connections' as any)}
             activeOpacity={0.65}>
             <View style={styles.listIconCol}>
-              <HugeiconsIcon icon={Grid02Icon} size={22} color={Colors.iconDark} strokeWidth={2} />
+              <HugeiconsIcon icon={Link01Icon} size={22} color={Colors.iconDark} strokeWidth={2} />
             </View>
-            <Text style={styles.listLabel}>Connectors</Text>
+            <Text style={styles.listLabel}>Tools & Connections</Text>
             <HugeiconsIcon icon={ArrowRight01Icon} size={20} color={Colors.iconMuted} strokeWidth={1.8} />
           </TouchableOpacity>
 

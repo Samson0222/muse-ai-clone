@@ -78,6 +78,9 @@ export default function TabLayout() {
           />
           <Tabs.Screen
             name="chat"
+            /* No tabPress override: the screen stays mounted, so coming back
+               to Chat shows the last conversation. The first open is the main
+               chat (see chat.tsx). */
             options={{
               title: 'Chat',
               tabBarIcon: ({ focused }) => (
@@ -165,13 +168,15 @@ export default function TabLayout() {
         activeChatId="chat-1"
         agentName={agentName}
         onClose={() => setIsSidebarOpen(false)}
-        onSelectChat={(chatTitle) => {
+        onSelectChat={() => {
           setIsSidebarOpen(false);
-          router.replace('/(tabs)/chat' as any);
         }}
         onNewChat={() => {
           setIsSidebarOpen(false);
-          router.replace('/(tabs)/chat' as any);
+          router.replace({
+            pathname: '/(tabs)/chat',
+            params: { chatType: 'side', fresh: String(Date.now()) },
+          } as any);
         }}
         onOpenSettings={() => {
           setIsSidebarOpen(false);

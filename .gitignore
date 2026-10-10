@@ -47,3 +47,6 @@ example
 # documentation / temp docs
 docs/docs/
 
+
+# Supabase CLI scratch data
+supabase/.temp/

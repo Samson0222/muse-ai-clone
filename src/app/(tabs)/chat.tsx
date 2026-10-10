@@ -20,10 +20,18 @@ import {
   Keyboard,
   TouchableWithoutFeedback,
   ActivityIndicator,
+  Modal,
+  Pressable,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { HugeiconsIcon } from "@hugeicons/react-native";
-import { Add01Icon, Mic01Icon, SentIcon } from "@hugeicons/core-free-icons";
+import {
+  Add01Icon,
+  Copy01Icon,
+  Mic01Icon,
+  SentIcon,
+} from "@hugeicons/core-free-icons";
+import * as Clipboard from "expo-clipboard";
 import { Colors } from "@/constants/colors";
 import { INITIAL_CHAT_MESSAGES } from "@/constants/dummyData";
 import { ChatMessage } from "@/types";
@@ -32,13 +40,65 @@ import { getApiUrl } from "@/lib/services";
 import axios from "axios";
 import { supabase } from "@/lib/supabase";
 import {
-  CreateNewThread,
-  GetThread,
+  CreateThreadForDraft,
+  GetMainThread,
   SaveMessage,
   LoadMessages,
+  UpdateThreadTitle,
 } from "@/services/chatHistory";
+import { generateChatTitle, deriveTitleFromMessage } from "@/services/chatTitle";
 import { useLocalSearchParams } from "expo-router";
 import { ChatBrowserPreview } from "@/components/common/ChatBrowserPreview";
+import { MarkdownText } from "@/components/common/MarkdownText";
+import {
+  ChatConfirmCard,
+  ChatConnectCta,
+  ChatScheduleCard,
+} from "@/components/common/ChatToolCards";
+import {
+  createConfirmedSchedule,
+  executeConfirmedToolAction,
+} from "@/lib/composioBackend";
+import { runToolConnectionFlow } from "@/lib/connectToolFlow";
+import type {
+  ChatConfirmRequest,
+  ChatConfirmState,
+  ChatConnectSuggestionTool,
+  ChatScheduleRequest,
+} from "@/types";
+
+/** Companion name shown in the composer placeholder. */
+const AGENT_NAME = "Cooper";
+
+/** Text of the placeholder bubble shown while the agent works. */
+const WORKING_TEXT = "Working...";
+
+/** The device timezone, so "8 AM" means 8 AM for this user. */
+const deviceTimezone = () => {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  } catch {
+    return "UTC";
+  }
+};
+
+/** Messages the model should see: no placeholders, no empty bubbles. */
+const toHistory = (list: ChatMessage[]) =>
+  list.filter((msg) => msg.text?.trim() && msg.text !== WORKING_TEXT);
+
+/** Names a new thread in the background; failures are silent by design. */
+async function nameThread(
+  threadId: string,
+  userMessage: string,
+  agentMessage: string,
+) {
+  try {
+    const title = await generateChatTitle(userMessage, agentMessage);
+    await UpdateThreadTitle(threadId, title);
+  } catch (error) {
+    console.error("Error naming chat thread:", error);
+  }
+}
 
 export default function ChatScreen() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -47,21 +107,59 @@ export default function ChatScreen() {
   const insets = useSafeAreaInsets();
   const [isSending, setIsSending] = useState(false);
   const [threadId, setThreadId] = useState<string | null>(null);
-  const [threadData, setThreadData] = useState<any>(null);
   const [userEmail, setUserEmail] = useState<string | null>(null);
-  const { thread_id, chatType } = useLocalSearchParams<{
+  const [connectingSlug, setConnectingSlug] = useState<string | null>(null);
+  /** Thread created by this screen's own first send: its history is on screen. */
+  const createdHereRef = useRef<string | null>(null);
+  /** Latest messages for async callbacks that outlive a render (e.g. OAuth). */
+  const messagesRef = useRef<ChatMessage[]>([]);
+  messagesRef.current = messages;
+  /** Message the user long-pressed, shown in the action menu. */
+  const [menuMessage, setMenuMessage] = useState<ChatMessage | null>(null);
+  const { thread_id, chatType, fresh } = useLocalSearchParams<{
     thread_id?: string;
+    /**
+     * 'side' starts a new, empty side chat (the sidebar New chat button).
+     * Anything else opens the main conversation.
+     */
     chatType?: string;
+    /** Changes on every New chat press so a new, empty chat opens. */
+    fresh?: string;
   }>();
 
   // Calculate header height offset for iOS KeyboardAvoidingView (SafeAreaView top + AppHeader height)
   const headerOffset = Platform.OS === "ios" ? insets.top + 98 : 0;
 
+  // Opening Chat without a thread_id shows an unsaved draft first (main chat by
+  // default, a side chat after New chat). Nothing is written to Supabase until
+  // the first message is sent.
   useEffect(() => {
     if (thread_id) {
       setThreadId(thread_id);
+      return;
     }
-  }, [thread_id]);
+    createdHereRef.current = null;
+    setThreadId(null);
+    setMessages([]);
+  }, [thread_id, fresh]);
+
+  // No thread id and not an explicit New chat: this is the main chat. Reuse the
+  // main thread if it exists, otherwise stay a draft and create it on the first
+  // message.
+  useEffect(() => {
+    if (thread_id || chatType === "side" || !userEmail) return;
+    let cancelled = false;
+    GetMainThread(userEmail)
+      .then((main) => {
+        if (!cancelled && main?.id && !createdHereRef.current) {
+          setThreadId(main.id);
+        }
+      })
+      .catch((error) => console.error("Error loading main chat:", error));
+    return () => {
+      cancelled = true;
+    };
+  }, [thread_id, chatType, fresh, userEmail]);
 
   useEffect(() => {
     const loadUser = async () => {
@@ -77,8 +175,11 @@ export default function ChatScreen() {
   }, [messages]);
 
   useEffect(() => {
-    userEmail && GetThreadData();
-    threadId && userEmail && GetChatHistory();
+    if (!threadId || !userEmail) return;
+    // Skip the reload for a thread this screen just created: the live
+    // conversation (including the streaming reply) is already rendered.
+    if (createdHereRef.current === threadId) return;
+    GetChatHistory();
   }, [threadId, userEmail]);
 
   const GetChatHistory = async () => {
@@ -95,29 +196,6 @@ export default function ChatScreen() {
     setMessages(MappedMessages ?? []);
   };
 
-  const GetThreadData = async () => {
-    if (!threadId) {
-      //Its Main Thread and check if It already exist in DB?
-      //MainThreadId =< userEmail-main>
-
-      const Thread = await GetThread(threadId ?? "", userEmail ?? "");
-      if (!Thread) {
-        //Create New Main Thread
-        const newThread = await CreateNewThread(
-          userEmail ?? "",
-          "main",
-          "Main Chat",
-        );
-        console.log(newThread);
-      }
-
-      //Save ThreadData in state
-      console.log(Thread);
-      setThreadData(Thread);
-      setThreadId(Thread?.id ?? null);
-    }
-  };
-
   // Scroll to bottom when keyboard appears
   useEffect(() => {
     const showEvent =
@@ -130,37 +208,74 @@ export default function ChatScreen() {
     return () => sub.remove();
   }, []);
 
-  const handleSend = async () => {
-    const text = inputText.trim();
-    if (!text) return;
-
+  /**
+   * Runs one agent turn.
+   * - New message: the user bubble is added and persisted first.
+   * - Resume (`resumeHistory`): the original request is sent again as-is,
+   *   used after a Connect so the user never has to retype it.
+   */
+  const runTurn = async (text: string, resumeHistory?: ChatMessage[]) => {
+    const isResume = !!resumeHistory;
     setIsSending(true);
 
-    const userMsg: ChatMessage = {
-      id: `msg-${Date.now()}`,
-      sender: "user",
-      text,
-      timestamp: new Date().toLocaleTimeString([], {
-        hour: "2-digit",
-        minute: "2-digit",
-      }),
-    };
+    let requestMessages: ChatMessage[];
+    if (resumeHistory) {
+      requestMessages = resumeHistory;
+    } else {
+      const userMsg: ChatMessage = {
+        id: `msg-${Date.now()}`,
+        sender: "user",
+        text,
+        timestamp: new Date().toLocaleTimeString([], {
+          hour: "2-digit",
+          minute: "2-digit",
+        }),
+      };
+      requestMessages = [...messagesRef.current, userMsg];
+      setMessages((prev) => [...prev, userMsg]);
+    }
 
-    setMessages((prev) => [...prev, userMsg]);
-    setInputText("");
+    // A draft chat becomes a real thread only once a conversation happens.
+    const draftType = chatType === "side" ? "side" : "main";
+    let activeThreadId = threadId;
+    const isNewThread = !activeThreadId && !isResume;
+    if (isNewThread) {
+      try {
+        const created = await CreateThreadForDraft(
+          userEmail ?? "",
+          draftType === "main" ? "Main Chat" : deriveTitleFromMessage(text),
+          draftType,
+        );
+        activeThreadId = created?.id ?? null;
+        createdHereRef.current = activeThreadId;
+        setThreadId(activeThreadId);
+      } catch (error) {
+        console.error("Error creating chat thread:", error);
+      }
+    }
 
-    await SaveMessage(userEmail ?? "", threadId ?? "", "user", text, {});
+    if (!isResume) {
+      await SaveMessage(userEmail ?? "", activeThreadId ?? "", "user", text, {});
+    }
+
+    const agentMessageId = `msg-${Date.now() + 1}`;
 
     try {
       const ApiUrl = getApiUrl("/chat");
+
+      // The agent needs the session to read this user's connected tools.
+      const { data: sessionData } = await supabase.auth.getSession();
+      const accessToken = sessionData.session?.access_token;
 
       const response = await fetch(ApiUrl, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
+          ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
         },
         body: JSON.stringify({
-          messages: [...messages, userMsg],
+          messages: toHistory(requestMessages),
+          timezone: deviceTimezone(),
         }),
       });
 
@@ -172,7 +287,6 @@ export default function ChatScreen() {
       const decoder = new TextDecoder();
 
       let buffer = "";
-      let agentMessageId = `msg-${Date.now() + 1}`;
 
       // Add placeholder message immediately
       setMessages((prev) => [
@@ -180,7 +294,7 @@ export default function ChatScreen() {
         {
           id: agentMessageId,
           sender: "agent",
-          text: "Working...",
+          text: WORKING_TEXT,
           timestamp: new Date().toLocaleTimeString([], {
             hour: "2-digit",
             minute: "2-digit",
@@ -209,39 +323,55 @@ export default function ChatScreen() {
 
           // Browser created -> show preview immediately
           if (data.type === "browser") {
-            setMessages((prev) =>
-              prev.map((msg) =>
-                msg.id === agentMessageId
-                  ? {
-                      ...msg,
-                      browserPreview: data.browser,
-                    }
-                  : msg,
-              ),
-            );
+            patchMessage(agentMessageId, { browserPreview: data.browser });
+          }
+
+          // A required tool is not connected -> show the Connect CTA
+          if (data.type === "connect") {
+            patchMessage(agentMessageId, { connectSuggestion: data.connect });
+          }
+
+          // A write action is waiting for Confirm / Cancel
+          if (data.type === "confirm") {
+            patchMessage(agentMessageId, {
+              confirmRequest: data.confirm,
+              confirmState: "pending" as ChatConfirmState,
+            });
+          }
+
+          // A recurring task is waiting for Confirm / Cancel
+          if (data.type === "schedule") {
+            patchMessage(agentMessageId, {
+              scheduleRequest: data.schedule,
+              scheduleState: "pending" as ChatConfirmState,
+            });
           }
 
           // Final agent response
           if (data.type === "final") {
-            setMessages((prev) =>
-              prev.map((msg) =>
-                msg.id === agentMessageId
-                  ? {
-                      ...msg,
-                      text:
-                        data.output ?? "No Response from AI agent, Try Again",
-                    }
-                  : msg,
-              ),
-            );
+            // Stop the typing indicator now: the stream stays open a little
+            // longer while browser sessions are torn down server side.
+            setIsSending(false);
+
+            const agentText =
+              data.output || "No Response from AI agent, Try Again";
+            patchMessage(agentMessageId, { text: agentText });
 
             await SaveMessage(
               userEmail ?? "",
-              threadId ?? "",
+              activeThreadId ?? "",
               "assistant",
-              data.output ?? "No Response from AI agent, Try Again",
+              agentText,
               {},
             );
+
+            // Name a brand-new side chat from its first exchange (the main
+            // chat keeps its fixed name).
+            // Detached on purpose: naming calls the model, and awaiting it
+            // here would keep the "AI is typing..." indicator on screen.
+            if (isNewThread && activeThreadId && draftType === "side") {
+              nameThread(activeThreadId, text, agentText);
+            }
           }
 
           if (data.type === "error") {
@@ -251,10 +381,182 @@ export default function ChatScreen() {
       }
     } catch (error) {
       console.error("Error sending message:", error);
+      // Never leave a "Working..." bubble behind: it would also be sent to
+      // the model as if the assistant had said it.
+      patchMessage(agentMessageId, {
+        text: "Something went wrong on my side. Please try again.",
+      });
       showToast("Failed to send message");
     } finally {
       setIsSending(false);
     }
+  };
+
+  const handleSend = async () => {
+    const text = inputText.trim();
+    if (!text) return;
+
+    setInputText("");
+    await runTurn(text);
+  };
+
+  /** Appends an agent message and persists it to the thread. */
+  const appendAgentMessage = async (text: string, metadata: any = {}) => {
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: `msg-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        sender: "agent",
+        text,
+        timestamp: new Date().toLocaleTimeString([], {
+          hour: "2-digit",
+          minute: "2-digit",
+        }),
+      },
+    ]);
+    await SaveMessage(
+      userEmail ?? "",
+      threadId ?? "",
+      "assistant",
+      text,
+      metadata,
+    );
+  };
+
+  const patchMessage = (messageId: string, patch: Partial<ChatMessage>) => {
+    setMessages((prev) =>
+      prev.map((msg) => (msg.id === messageId ? { ...msg, ...patch } : msg)),
+    );
+  };
+
+  /**
+   * Connect CTA: runs the same OAuth flow as Tools & Connections. Once every
+   * tool on the card is connected, the original request is re-sent
+   * automatically, so the user never has to retype it.
+   */
+  const handleConnectTool = async (
+    messageId: string,
+    tool: ChatConnectSuggestionTool,
+  ) => {
+    setConnectingSlug(tool.slug);
+    try {
+      const result = await runToolConnectionFlow(
+        tool.slug,
+        tool.name,
+        "(tabs)/chat",
+      );
+      showToast(result.message);
+      if (result.status !== "connected") return;
+
+      const card = messagesRef.current.find((msg) => msg.id === messageId);
+      const needed = card?.connectSuggestion?.tools.map((t) => t.slug) ?? [];
+      const connected = Array.from(
+        new Set([...(card?.connectedSlugs ?? []), tool.slug]),
+      );
+      patchMessage(messageId, { connectedSlugs: connected });
+
+      // Wait for the other tools on this card, if any.
+      if (needed.some((slug) => !connected.includes(slug))) return;
+
+      // The request that triggered the card is the user message before it.
+      const list = messagesRef.current;
+      const cardIndex = list.findIndex((msg) => msg.id === messageId);
+      let requestIndex = cardIndex - 1;
+      while (requestIndex >= 0 && list[requestIndex].sender !== "user") {
+        requestIndex -= 1;
+      }
+      if (requestIndex < 0) {
+        showToast(`${tool.name} connected. Send your request again.`);
+        return;
+      }
+
+      await runTurn(list[requestIndex].text, list.slice(0, requestIndex + 1));
+    } catch (error: any) {
+      showToast(error?.message ?? `Could not connect ${tool.name}`);
+    } finally {
+      setConnectingSlug(null);
+    }
+  };
+
+  const handleCopyMessage = async (message: ChatMessage) => {
+    setMenuMessage(null);
+    try {
+      await Clipboard.setStringAsync(message.text);
+      showToast("Copied");
+    } catch {
+      showToast("Could not copy this message");
+    }
+  };
+
+  /** Confirm card: executes the pending write action server side. */
+  const handleConfirmAction = async (
+    messageId: string,
+    request: ChatConfirmRequest,
+  ) => {
+    patchMessage(messageId, { confirmState: "running" });
+    try {
+      const result = await executeConfirmedToolAction(
+        request.capability,
+        request.input,
+      );
+      patchMessage(messageId, {
+        confirmState: result.status === "success" ? "confirmed" : "failed",
+      });
+      await appendAgentMessage(result.message, {
+        tool_run: {
+          capability: request.capability,
+          action: result.action,
+          status: result.status,
+        },
+      });
+    } catch (error: any) {
+      patchMessage(messageId, { confirmState: "failed" });
+      const message = error?.message ?? "Tool execution failed";
+      showToast(message);
+      await appendAgentMessage(`I couldn't complete that: ${message}`, {
+        tool_run: { capability: request.capability, status: "failed" },
+      });
+    }
+  };
+
+  const handleCancelAction = (messageId: string, request: ChatConfirmRequest) => {
+    patchMessage(messageId, { confirmState: "cancelled" });
+    showToast(`Cancelled — ${request.toolName} was not used`);
+  };
+
+  /**
+   * Schedule card: only now is the task saved to Supabase, where the cron
+   * dispatcher (`agent-run`) picks it up once `next_run_at` is due.
+   */
+  const handleConfirmSchedule = async (
+    messageId: string,
+    request: ChatScheduleRequest,
+  ) => {
+    patchMessage(messageId, { scheduleState: "running" });
+    try {
+      const created = await createConfirmedSchedule(request, threadId);
+      patchMessage(messageId, { scheduleState: "confirmed" });
+      const where =
+        created.delivery === "slack" && request.slackChannel
+          ? `in Slack ${request.slackChannel}`
+          : "here in this chat";
+      await appendAgentMessage(
+        `Scheduled: **${request.title}**. ${created.scheduleSummary} (${request.timezone}). The first run is ${created.nextRunLabel}, and I'll post the result ${where}.`,
+        { schedule: { id: created.id, status: "created" } },
+      );
+    } catch (error: any) {
+      patchMessage(messageId, { scheduleState: "failed" });
+      const message = error?.message ?? "Could not save the schedule";
+      showToast(message);
+      await appendAgentMessage(`I couldn't schedule that: ${message}`, {
+        schedule: { status: "failed" },
+      });
+    }
+  };
+
+  const handleCancelSchedule = (messageId: string) => {
+    patchMessage(messageId, { scheduleState: "cancelled" });
+    showToast("Cancelled — nothing was scheduled");
   };
 
   return (
@@ -293,8 +595,10 @@ export default function ChatScreen() {
                 return (
                   <TouchableOpacity
                     key={msg.id}
-                    activeOpacity={0.8}
-                    onPress={() => showToast(msg.text)}
+                    activeOpacity={0.9}
+                    delayLongPress={300}
+                    onPress={Keyboard.dismiss}
+                    onLongPress={() => setMenuMessage(msg)}
                     style={[
                       styles.messageRow,
                       isUser ? styles.userMessageRow : styles.agentMessageRow,
@@ -306,19 +610,61 @@ export default function ChatScreen() {
                         isUser ? styles.userBubble : styles.agentBubble,
                       ]}
                     >
-                      <Text
-                        style={[
-                          styles.bubbleText,
+                      <MarkdownText
+                        content={msg.text}
+                        color={
+                          isUser ? Colors.chatBubbleUserText : Colors.iconDark
+                        }
+                        linkColor={
+                          isUser ? Colors.chatBubbleUserLink : Colors.primary
+                        }
+                        codeBackground={
+                          isUser ? Colors.chatBubbleUserCodeBg : undefined
+                        }
+                        ruleColor={
+                          isUser ? Colors.chatBubbleUserRule : undefined
+                        }
+                        textStyle={
                           isUser
                             ? styles.userBubbleText
-                            : styles.agentBubbleText,
-                        ]}
-                      >
-                        {msg.text}
-                      </Text>
+                            : styles.agentBubbleText
+                        }
+                      />
                       {!isUser && msg.browserPreview ? (
                         <ChatBrowserPreview
                           browserPreview={msg.browserPreview}
+                        />
+                      ) : null}
+                      {!isUser && msg.connectSuggestion ? (
+                        <ChatConnectCta
+                          suggestion={msg.connectSuggestion}
+                          busySlug={connectingSlug}
+                          connectedSlugs={msg.connectedSlugs}
+                          onConnect={(tool) =>
+                            handleConnectTool(msg.id, tool)
+                          }
+                        />
+                      ) : null}
+                      {!isUser && msg.confirmRequest ? (
+                        <ChatConfirmCard
+                          request={msg.confirmRequest}
+                          state={msg.confirmState ?? "pending"}
+                          onConfirm={(request) =>
+                            handleConfirmAction(msg.id, request)
+                          }
+                          onCancel={(request) =>
+                            handleCancelAction(msg.id, request)
+                          }
+                        />
+                      ) : null}
+                      {!isUser && msg.scheduleRequest ? (
+                        <ChatScheduleCard
+                          request={msg.scheduleRequest}
+                          state={msg.scheduleState ?? "pending"}
+                          onConfirm={(request) =>
+                            handleConfirmSchedule(msg.id, request)
+                          }
+                          onCancel={() => handleCancelSchedule(msg.id)}
                         />
                       ) : null}
                     </View>
@@ -369,7 +715,7 @@ export default function ChatScreen() {
                   scrollViewRef.current?.scrollToEnd({ animated: true });
                 }, 100);
               }}
-              placeholder="Message in Start a health goal"
+              placeholder={`Message ${AGENT_NAME}`}
               placeholderTextColor={Colors.iconMuted}
               returnKeyType="send"
               onSubmitEditing={handleSend}
@@ -406,6 +752,38 @@ export default function ChatScreen() {
           </View>
         </View>
       </View>
+
+      {/* Long-press message menu */}
+      <Modal
+        visible={!!menuMessage}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setMenuMessage(null)}
+      >
+        <Pressable
+          style={styles.menuBackdrop}
+          onPress={() => setMenuMessage(null)}
+        >
+          <View style={styles.menuCard}>
+            {menuMessage?.timestamp ? (
+              <Text style={styles.menuTimestamp}>{menuMessage.timestamp}</Text>
+            ) : null}
+            <TouchableOpacity
+              style={styles.menuItem}
+              activeOpacity={0.7}
+              onPress={() => menuMessage && handleCopyMessage(menuMessage)}
+            >
+              <HugeiconsIcon
+                icon={Copy01Icon}
+                size={20}
+                color={Colors.iconDark}
+                strokeWidth={2}
+              />
+              <Text style={styles.menuItemText}>Copy</Text>
+            </TouchableOpacity>
+          </View>
+        </Pressable>
+      </Modal>
     </KeyboardAvoidingView>
   );
 }
@@ -477,12 +855,47 @@ const styles = StyleSheet.create({
     letterSpacing: -0.1,
   },
   userBubbleText: {
-    color: "#3B2318",
+    color: Colors.chatBubbleUserText,
     fontWeight: "500",
   },
   agentBubbleText: {
     color: Colors.iconDark,
     fontWeight: "400",
+  },
+  menuBackdrop: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: Colors.overlaySoft,
+    paddingHorizontal: 32,
+  },
+  menuCard: {
+    width: "100%",
+    maxWidth: 320,
+    borderRadius: 20,
+    backgroundColor: Colors.white,
+    paddingVertical: 8,
+    overflow: "hidden",
+  },
+  menuTimestamp: {
+    paddingHorizontal: 18,
+    paddingTop: 8,
+    paddingBottom: 6,
+    fontSize: 12.5,
+    fontWeight: "600",
+    color: Colors.iconMuted,
+  },
+  menuItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    paddingHorizontal: 18,
+    paddingVertical: 14,
+  },
+  menuItemText: {
+    fontSize: 16,
+    fontWeight: "500",
+    color: Colors.iconDark,
   },
   inputWrapper: {
     paddingHorizontal: 16,

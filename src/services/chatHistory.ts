@@ -93,16 +93,56 @@ export const SaveMessage = async (
     .update({ updated_at: new Date().toISOString() })
     .eq('id', threadId);
 
-  // If this is the first assistant reply, use snippet as thread title
-  if (role === 'assistant') {
-    await supabase
-      .from('chat_threads')
-      .update({ title: content?.slice(0, 40) })
-      .eq('id', threadId);
-  }
-
   return data;
 };
+
+/** Renames a thread (used by auto-titling and by the sidebar rename sheet). */
+export const UpdateThreadTitle = async (threadId: string, title: string) => {
+  const clean = title.trim().slice(0, 60);
+  if (!threadId || !clean) return null;
+
+  const { data, error } = await supabase
+    .from('chat_threads')
+    .update({ title: clean, updated_at: new Date().toISOString() })
+    .eq('id', threadId)
+    .select()
+    .single();
+
+  if (error) throw error;
+  return data;
+};
+
+/** The user's single 'main' thread, or null until it is first used. */
+export const GetMainThread = async (userEmail: string) => {
+  const { data, error } = await supabase
+    .from('chat_threads')
+    .select('*')
+    .eq('user_email', userEmail)
+    .eq('type', 'main')
+    .order('created_at', { ascending: true })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) throw error;
+  return data;
+};
+
+/**
+ * Creates the thread for a draft chat on its first message, so an opened but
+ * unused chat screen never leaves an empty thread behind.
+ * Drafts opened from "Main chat" become the main thread; every other draft
+ * becomes a side chat.
+ */
+export const CreateThreadForDraft = (
+  userEmail: string,
+  title?: string,
+  type: ChatThreadType = 'side',
+) =>
+  CreateNewThread(
+    userEmail,
+    type,
+    title || (type === 'main' ? 'Main Chat' : 'New chat'),
+  );
 
 export const GetAllUserThreads = async (userEmail: string) => {
   const { data, error } = await supabase
@@ -139,4 +179,7 @@ export const loadMessages = LoadMessages;
 export const createNewThread = CreateNewThread;
 export const getAllUserThreads = GetAllUserThreads;
 export const deleteThread = DeleteThread;
+export const updateThreadTitle = UpdateThreadTitle;
+export const getMainThread = GetMainThread;
+export const createThreadForDraft = CreateThreadForDraft;
 
